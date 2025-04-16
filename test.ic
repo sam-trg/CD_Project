@@ -1,0 +1,16 @@
+#include <stdio.h>
+
+int main(void):
+    printf("Hello this is a test file.\n");
+    int a=5;
+    int b=3;
+    int greater, lesser;
+    if(a>b):
+        greater=a;
+        lesser=b;
+    else:
+        greater=b;
+        lesser=a;
+    printf("%d is bigger than %d\n", greater, lesser);
+    return 0;
+

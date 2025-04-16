@@ -1,0 +1,22 @@
+#!/bin/bash
+
+if [ $# -ne 1 ]; then
+    echo "Usage: icc <file.ic>"
+    exit 1
+fi
+
+input="$1"
+
+if [[ "$input" != *.ic ]]; then
+    echo "Error: Input file must have .ic extension"
+    exit 1
+fi
+
+./convert "$input"
+if [ $? -ne 0 ]; then
+    echo "Indent-C to C conversion failed"
+    exit 1
+fi
+
+cfile="${input%.ic}.c"
+gcc "$cfile" -o "${input%.ic}"

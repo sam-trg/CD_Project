@@ -1,0 +1,151 @@
+#!/bin/bash
+#TODO: change temp generated filename form input.c to temp.c if --keep-c flag not invoked to avoud deletion of pre-existing file with same name
+keep_c=0
+input=""
+
+for arg in "$@"; do
+    if [[ "$arg" == "--keep-c" ]]; then
+        keep_c=1
+    elif [[ "$arg" == *.ic ]]; then
+        input="$arg"
+    else
+        echo "Usage: icc [--keep-c] <file.ic>"
+        exit 1
+    fi
+done
+
+if [[ -z "$input" ]]; then
+    echo "Error: No .ic input file provided"
+    exit 1
+fi
+
+tmpc=$(mktemp /tmp/convert-XXXXXX.c)
+tmpbin=$(mktemp /tmp/convert-bin-XXXXXX)
+
+cat > "$tmpc" << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_LINE 1024
+#define MAX_STACK 1024
+
+typedef struct {
+    int data[MAX_STACK];
+    int top;
+} Stack;
+
+void push(Stack *s, int value) {
+    if (s->top < MAX_STACK) s->data[s->top++] = value;
+}
+
+int pop(Stack *s) {
+    return s->top > 0 ? s->data[--s->top] : 0;
+}
+
+int peek(Stack *s) {
+    return s->top > 0 ? s->data[s->top - 1] : 0;
+}
+
+int ends_with_colon(const char *line) {
+    int len = strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' || line[len - 1] == ' '))
+        len--;
+    return len > 0 && line[len - 1] == ':';
+}
+
+int leading_spaces(const char *line) {
+    int count = 0;
+    while (*line == ' ') {
+        count++;
+        line++;
+    }
+    return count;
+}
+
+int is_blank_or_comment(const char *line) {
+    while (*line == ' ') line++;
+    return *line == '\0' || strncmp(line, "//", 2) == 0;
+}
+
+void rstrip(char *line) {
+    int len = strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+        len--;
+    line[len] = '\0';
+}
+
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <input.ic>\n", argv[0]);
+        return 1;
+    }
+
+    FILE *in = fopen(argv[1], "r");
+    if (!in) {
+        perror("File open failed");
+        return 1;
+    }
+
+    char output_file[256];
+    strncpy(output_file, argv[1], sizeof(output_file));
+    char *dot = strrchr(output_file, '.');
+    if (dot) strcpy(dot, ".c");
+    else strcat(output_file, ".c");
+
+    FILE *out = fopen(output_file, "w");
+    if (!out) {
+        perror("File create failed");
+        fclose(in);
+        return 1;
+    }
+
+    char line[MAX_LINE];
+    Stack indent = {.top = 0};
+    push(&indent, 0);
+
+    while (fgets(line, sizeof(line), in)) {
+        rstrip(line);
+        if (is_blank_or_comment(line)) {
+            fprintf(out, "%s\n", line);
+            continue;
+        }
+
+        int curr_indent = leading_spaces(line);
+        int prev_indent = peek(&indent);
+
+        while (curr_indent < prev_indent) {
+            fprintf(out, "%*s}\n", prev_indent, "");
+            pop(&indent);
+            prev_indent = peek(&indent);
+        }
+
+        if (ends_with_colon(line)) {
+            line[strlen(line) - 1] = '\0';
+            fprintf(out, "%*s%s {\n", curr_indent, "", line + curr_indent);
+            push(&indent, curr_indent + 4);
+        } else {
+            fprintf(out, "%s\n", line);
+        }
+    }
+
+    while (indent.top > 1) {
+        fprintf(out, "%*s}\n", peek(&indent), "");
+        pop(&indent);
+    }
+
+    fclose(in);
+    fclose(out);
+    return 0;
+}
+EOF
+
+gcc "$tmpc" -o "$tmpbin" || { echo "Compile failed"; rm -f "$tmpc" "$tmpbin"; exit 1; }
+
+"$tmpbin" "$input" || { echo "Conversion failed"; rm -f "$tmpc" "$tmpbin"; exit 1; }
+
+cfile="${input%.ic}.c"
+gcc "$cfile" -o "${input%.ic}" || { echo "gcc failed"; rm -f "$tmpc" "$tmpbin"; exit 1; }
+
+rm -f "$tmpc" "$tmpbin"
+[[ $keep_c -eq 0 ]] && rm -f "$cfile"
